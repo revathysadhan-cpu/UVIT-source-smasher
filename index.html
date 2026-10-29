@@ -1,0 +1,1244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>UVIT Source Smasher</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="A tap-to-smash arcade game inspired by the AstroSat Ultra Violet Imaging Telescope.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700;800&family=Figtree:ital,wght@0,400;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: one full-bleed canvas "detector frame"; a slim HUD strip on top; every menu is a floating glass panel over the live field. Single deliberate dark look. */
+:root {
+  color-scheme: dark;
+  --void: #060a1d;
+  --deep: #0c1333;
+  --panel: rgba(16, 22, 56, 0.82);
+  --panel-solid: #121a42;
+  --line: rgba(160, 175, 255, 0.18);
+  --ink: #eceffe;
+  --muted: #9ba4d8;
+  --fuv: #a98bff;
+  --nuv: #57e6d0;
+  --pink: #f7a8d6;
+  --gold: #fcd38a;
+  --danger: #ff7d5c;
+  --display: "Unbounded", "Arial Black", system-ui, sans-serif;
+  --body: "Figtree", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+html, body { height: 100%; }
+body {
+  background: var(--void); color: var(--ink); font-family: var(--body);
+  overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+#app { position: fixed; inset: 0; overflow: hidden; background: var(--void); }
+#field { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
+#safe { position: absolute; visibility: hidden; pointer-events: none;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
+
+button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; }
+button:focus-visible { outline: 2px solid var(--nuv); outline-offset: 3px; }
+
+/* ---------- HUD ---------- */
+#hud {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 5; pointer-events: none;
+  padding-top: calc(10px + env(safe-area-inset-top, 0px)); padding-bottom: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: start; gap: 12px;
+  background: linear-gradient(to bottom, rgba(6, 10, 29, 0.92), rgba(6, 10, 29, 0.55) 75%, rgba(6, 10, 29, 0));
+  opacity: 0; transition: opacity .3s ease;
+}
+#hud.show { opacity: 1; }
+.hud-label { font-family: var(--mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.hud-left { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+#score { font-family: var(--display); font-weight: 700; font-size: clamp(22px, 5vw, 30px); line-height: 1; font-variant-numeric: tabular-nums; }
+#score { transform-origin: left center; }
+#score.bump { animation: bump .22s ease-out; }
+@keyframes bump { 40% { transform: scale(1.12); color: var(--nuv); } }
+.combo { display: flex; align-items: center; gap: 8px; white-space: nowrap; font-family: var(--mono); font-size: 12px; color: var(--muted); min-height: 18px; }
+#comboN { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+#mult { padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line); font-weight: 600; font-variant-numeric: tabular-nums; transition: color .2s, border-color .2s, box-shadow .2s; }
+#mult.hot { color: var(--void); background: var(--nuv); border-color: var(--nuv); box-shadow: 0 0 14px rgba(87, 230, 208, .55); }
+#mult.max { background: var(--pink); border-color: var(--pink); box-shadow: 0 0 16px rgba(247, 168, 214, .6); }
+.combo-bar { width: 64px; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+#comboFill { height: 100%; width: 0; background: var(--nuv); }
+
+.hud-mid { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+#timer { font-family: var(--display); font-weight: 800; font-size: clamp(24px, 6vw, 34px); line-height: 1; font-variant-numeric: tabular-nums; transition: color .3s; }
+#timer.final { color: var(--pink); animation: throb 1s ease-in-out infinite; }
+@keyframes throb { 50% { transform: scale(1.08); } }
+.exposure { display: flex; align-items: center; gap: 6px; }
+.exp-bar { width: clamp(70px, 18vw, 140px); height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+#expFill { height: 100%; width: 0; background: linear-gradient(90deg, var(--nuv), var(--fuv), var(--pink)); }
+#level { font-family: var(--mono); font-size: 10px; letter-spacing: .1em; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.hud-right { display: flex; justify-content: flex-end; align-items: flex-start; gap: 10px; }
+.lives-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+#lives { display: flex; gap: 5px; }
+.life { width: 12px; height: 12px; border-radius: 50%; background: var(--nuv); box-shadow: 0 0 8px rgba(87, 230, 208, .7); transition: all .25s; }
+.life.lost { background: transparent; box-shadow: none; border: 1.5px solid rgba(255, 125, 92, .6); transform: scale(.85); }
+.icon-btn {
+  pointer-events: auto; width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center;
+  background: var(--panel); border: 1px solid var(--line); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.icon-btn:hover { border-color: rgba(169, 139, 255, .55); }
+.icon-btn svg { width: 18px; height: 18px; }
+
+#filterChip {
+  position: absolute; z-index: 5; left: 50%; transform: translate(-50%, -6px); opacity: 0; pointer-events: none;
+  font-family: var(--mono); font-size: 11px; letter-spacing: .08em; padding: 5px 12px; border-radius: 999px;
+  background: rgba(12, 19, 51, .85); border: 1px solid var(--fuv); color: var(--ink); white-space: nowrap;
+  transition: opacity .35s, transform .35s, border-color .35s, box-shadow .35s;
+}
+#filterChip.show { opacity: 1; transform: translate(-50%, 0); }
+#filterChip b { font-weight: 600; }
+#filterChip.fuv { border-color: var(--fuv); box-shadow: 0 0 18px rgba(169, 139, 255, .45); }
+#filterChip.fuv b { color: var(--fuv); }
+#filterChip.nuv { border-color: var(--nuv); box-shadow: 0 0 18px rgba(87, 230, 208, .4); }
+#filterChip.nuv b { color: var(--nuv); }
+
+#banner {
+  position: absolute; z-index: 6; left: 50%; pointer-events: none; text-align: center;
+  font-family: var(--display); font-weight: 800; font-size: clamp(18px, 4.6vw, 28px); letter-spacing: .02em;
+  transform: translate(-50%, 0); opacity: 0; white-space: nowrap;
+  text-shadow: 0 0 18px rgba(169, 139, 255, .8), 0 2px 0 rgba(6, 10, 29, .9);
+}
+#banner.go { animation: bannerIn 1.25s cubic-bezier(.2, .9, .3, 1.2) forwards; }
+@keyframes bannerIn {
+  0% { opacity: 0; transform: translate(-50%, 10px) scale(.7); }
+  18% { opacity: 1; transform: translate(-50%, 0) scale(1.06); }
+  30% { transform: translate(-50%, 0) scale(1); }
+  78% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -12px) scale(1); }
+}
+
+#countdown {
+  position: absolute; inset: 0; z-index: 7; display: grid; place-items: center; pointer-events: none;
+  font-family: var(--display); font-weight: 800; font-size: clamp(80px, 22vw, 170px); color: var(--ink);
+  text-shadow: 0 0 40px rgba(169, 139, 255, .85);
+}
+#countdown span { animation: cd .9s ease-out forwards; }
+@keyframes cd { 0% { opacity: 0; transform: scale(1.6); } 25% { opacity: 1; transform: scale(1); } 100% { opacity: .0; transform: scale(.85); } }
+#countdown span.goTxt { color: var(--nuv); text-shadow: 0 0 40px rgba(87, 230, 208, .85); }
+
+/* discovery card: never blocks touches */
+#card {
+  position: absolute; z-index: 6; left: 50%; pointer-events: none; width: min(380px, calc(100% - 32px));
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  transform: translate(-50%, 24px); opacity: 0; transition: opacity .35s, transform .35s cubic-bezier(.2, .9, .3, 1.1);
+  display: grid; grid-template-columns: 52px 1fr; gap: 12px; align-items: center;
+  padding: 12px 14px; border-radius: 16px; background: var(--panel); border: 1px solid var(--line);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+#card.show { opacity: 1; transform: translate(-50%, 0); }
+#card canvas { width: 52px; height: 52px; }
+#cardKicker { font-family: var(--mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--nuv); }
+#cardTitle { font-weight: 700; font-size: 14px; margin: 2px 0 3px; }
+#cardText { font-size: 13px; line-height: 1.4; color: var(--muted); }
+
+/* ---------- Screens ---------- */
+.screen {
+  position: absolute; inset: 0; z-index: 10; display: grid; place-items: center; overflow-y: auto;
+  padding-block: calc(20px + env(safe-area-inset-top, 0px)) calc(20px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  opacity: 0; visibility: hidden; transition: opacity .35s ease, visibility 0s linear .35s; touch-action: pan-y;
+}
+.screen.show { opacity: 1; visibility: visible; transition: opacity .35s ease, visibility 0s; }
+.screen.dim { background: rgba(6, 10, 29, .55); }
+.panel {
+  width: min(460px, 100%); padding: 26px clamp(18px, 5vw, 30px); border-radius: 22px;
+  background: var(--panel); border: 1px solid var(--line);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .05);
+  transform: translateY(10px) scale(.98); transition: transform .4s cubic-bezier(.2, .9, .3, 1.1);
+}
+.screen.show .panel { transform: none; }
+
+/* menu */
+#menu .wrap { display: flex; flex-direction: column; align-items: center; gap: 22px; text-align: center; width: min(520px, 100%); }
+.eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--nuv); }
+h1 { margin: 0; font-family: var(--display); font-weight: 800; line-height: .95; text-wrap: balance; font-size: clamp(38px, 11vw, 74px); letter-spacing: -.01em; }
+h1 .uvit { display: block; font-size: .42em; letter-spacing: .32em; font-weight: 500; color: var(--muted); margin-bottom: .35em; }
+h1 .smash { display: block; color: var(--fuv); text-shadow: 0 0 34px rgba(169, 139, 255, .55); }
+.tagline { margin: 0; font-style: italic; font-size: clamp(15px, 3.6vw, 18px); color: var(--ink); opacity: .9; }
+.menu-btns { display: flex; flex-direction: column; gap: 10px; width: min(300px, 100%); }
+.btn {
+  height: 50px; border-radius: 14px; font-weight: 700; font-size: 16px; letter-spacing: .02em;
+  border: 1px solid var(--line); background: rgba(18, 26, 66, .7); transition: transform .12s, border-color .2s, background .2s;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+}
+.btn:hover { border-color: rgba(169, 139, 255, .6); }
+.btn:active { transform: scale(.97); }
+.btn.primary {
+  height: 58px; font-family: var(--display); font-size: 18px; color: #0a0f2a; border: 0;
+  background: var(--nuv); box-shadow: 0 0 0 1px rgba(87, 230, 208, .4), 0 10px 30px rgba(87, 230, 208, .28);
+}
+.btn.primary:hover { background: #7af0de; }
+.row-btns { display: flex; gap: 10px; }
+.row-btns .btn { flex: 1; }
+.best { font-family: var(--mono); font-size: 12px; letter-spacing: .14em; color: var(--muted); text-transform: uppercase; }
+.best b { color: var(--gold); font-weight: 600; font-size: 14px; letter-spacing: .04em; margin-left: 6px; font-variant-numeric: tabular-nums; }
+.credit { font-size: 12px; color: var(--muted); max-width: 40ch; line-height: 1.45; opacity: .8; }
+
+/* how to play */
+.panel h2 { margin: 0 0 4px; font-family: var(--display); font-weight: 700; font-size: 22px; }
+.panel .sub { margin: 0 0 18px; color: var(--muted); font-size: 14px; }
+.legend { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+.leg { display: grid; grid-template-columns: 40px 1fr; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 12px; background: rgba(255, 255, 255, .03); border: 1px solid transparent; min-width: 0; }
+.leg canvas { width: 40px; height: 40px; }
+.leg .nm { font-weight: 600; font-size: 13px; line-height: 1.2; }
+.leg .pt { font-family: var(--mono); font-size: 12px; color: var(--nuv); font-variant-numeric: tabular-nums; }
+.leg.bad { border-color: rgba(255, 125, 92, .35); background: rgba(255, 125, 92, .06); grid-column: 1 / -1; }
+.leg.bad .pt { color: var(--danger); }
+.leg.bad .icons { display: flex; }
+.rules { list-style: none; margin: 0 0 20px; padding: 0; display: grid; gap: 9px; font-size: 14px; line-height: 1.4; }
+.rules li { display: grid; grid-template-columns: 22px 1fr; gap: 8px; }
+.rules .k { font-family: var(--mono); color: var(--fuv); font-weight: 600; }
+.rules .m { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+
+/* pause */
+#pause .panel { text-align: center; width: min(340px, 100%); }
+#pause .stack { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+
+/* results */
+#results .panel { width: min(480px, 100%); }
+.res-head { text-align: center; margin-bottom: 18px; }
+.res-head .eyebrow { display: block; margin-bottom: 8px; }
+#finalScore { font-family: var(--display); font-weight: 800; font-size: clamp(46px, 13vw, 64px); line-height: 1; font-variant-numeric: tabular-nums; }
+#newBest { display: inline-block; margin-top: 8px; font-family: var(--mono); font-size: 11px; letter-spacing: .14em; padding: 3px 10px; border-radius: 999px; background: var(--gold); color: #1a1430; font-weight: 600; }
+.res-best { margin-top: 8px; font-family: var(--mono); font-size: 12px; color: var(--muted); letter-spacing: .08em; }
+.res-best b { color: var(--gold); font-variant-numeric: tabular-nums; }
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin-bottom: 20px; }
+.stat { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.stat canvas { width: 28px; height: 28px; }
+.stat .l { font-size: 13px; color: var(--muted); }
+.stat .v { font-family: var(--mono); font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat.wide { grid-column: 1 / -1; }
+.stat .badge { width: 28px; height: 28px; display: grid; place-items: center; font-family: var(--mono); font-size: 11px; color: var(--pink); border-radius: 8px; background: rgba(247, 168, 214, .1); }
+.res-btns { display: flex; flex-direction: column; gap: 10px; }
+
+@media (max-width: 420px) {
+  .legend { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: 1fr; }
+  #hud { gap: 8px; }
+  .combo-bar { width: 28px; }
+  .combo { gap: 6px; font-size: 11px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #timer.final, #score.bump { animation: none; }
+}
+</style>
+
+</head>
+<body>
+<div id="app">
+  <canvas id="field" aria-label="Observation field: tap sources to smash them"></canvas>
+  <div id="safe"></div>
+
+  <header id="hud" aria-live="off">
+    <div class="hud-left">
+      <span class="hud-label">Score</span>
+      <div id="score">0</div>
+      <div class="combo"><span>Combo <span id="comboN">0</span></span><span id="mult">×1</span><div class="combo-bar"><div id="comboFill"></div></div></div>
+    </div>
+    <div class="hud-mid">
+      <div id="timer">60</div>
+      <div class="exposure"><span class="hud-label">Exp</span><div class="exp-bar"><div id="expFill"></div></div><span id="level">LV1</span></div>
+    </div>
+    <div class="hud-right">
+      <div class="lives-wrap"><span class="hud-label">Lives</span><div id="lives"></div></div>
+      <button class="icon-btn" id="pauseBtn" aria-label="Pause">
+        <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></svg>
+      </button>
+    </div>
+  </header>
+  <div id="filterChip"></div>
+  <div id="banner"></div>
+  <div id="countdown"></div>
+  <div id="card" aria-live="polite"><canvas width="104" height="104"></canvas><div><div id="cardKicker">Discovery</div><div id="cardTitle"></div><div id="cardText"></div></div></div>
+
+  <!-- MENU -->
+  <section class="screen show" id="menu">
+    <div class="wrap">
+      <span class="eyebrow">AstroSat · Ultra Violet Imaging Telescope</span>
+      <h1><span class="uvit">UVIT</span>Source <span class="smash">Smasher</span></h1>
+      <p class="tagline">Smash the noise. Catch the cosmos.</p>
+      <div class="menu-btns">
+        <button class="btn primary" id="playBtn">Play</button>
+        <div class="row-btns">
+          <button class="btn" id="howBtn">How to Play</button>
+          <button class="btn soundBtn" id="soundBtn1"></button>
+        </div>
+      </div>
+      <div class="best">Best <b id="menuBest">0</b></div>
+      <p class="credit">60-second rounds. Tap sources, dodge space rocks, chain combos. Works with mouse, trackpad or touch.</p>
+    </div>
+  </section>
+
+  <!-- HOW TO PLAY -->
+  <section class="screen dim" id="how">
+    <div class="panel" role="dialog" aria-labelledby="howTitle">
+      <h2 id="howTitle">How to Play</h2>
+      <p class="sub">Tap sources before they fade. One round lasts 60 seconds.</p>
+      <div class="legend">
+        <div class="leg"><canvas data-icon="star" width="80" height="80"></canvas><div><div class="nm">Star</div><div class="pt">+10</div></div></div>
+        <div class="leg"><canvas data-icon="noise" width="80" height="80"></canvas><div><div class="nm">Noise</div><div class="pt">+15</div></div></div>
+        <div class="leg"><canvas data-icon="rrlyrae" width="80" height="80"></canvas><div><div class="nm">RR Lyrae</div><div class="pt">+40</div></div></div>
+        <div class="leg"><canvas data-icon="agn" width="80" height="80"></canvas><div><div class="nm">AGN</div><div class="pt">+50</div></div></div>
+        <div class="leg"><canvas data-icon="galaxy" width="80" height="80"></canvas><div><div class="nm">Galaxy</div><div class="pt">+60</div></div></div>
+        <div class="leg"><canvas data-icon="galaxyE" width="80" height="80"></canvas><div><div class="nm">Galaxy (elliptical)</div><div class="pt">+60</div></div></div>
+        <div class="leg bad" style="grid-template-columns:84px 1fr"><div class="icons"><canvas data-icon="meteor" width="80" height="80"></canvas><canvas data-icon="rock" width="80" height="80"></canvas></div><div><div class="nm">Meteors &amp; space rocks</div><div class="pt">Avoid · costs a life and your combo</div></div></div>
+      </div>
+      <ul class="rules">
+        <li><span class="k">✦</span><span>Smash stars and noise for steady points.</span></li>
+        <li><span class="k">◎</span><span>Grab rare cosmic bonuses before they vanish fast.</span></li>
+        <li><span class="k">✕</span><span>Avoid meteors and rocks. Three hits and the exposure ends.</span></li>
+        <li><span class="k">↗</span><span>Chain hits for a multiplier. <span class="m">3 → ×1.2 · 5 → ×1.5 · 10 → ×2</span></span></li>
+        <li><span class="k">λ</span><span>During a <b>Filter Flip</b>, sources glowing in FUV or NUV pay a +20 bonus.</span></li>
+      </ul>
+      <button class="btn primary" id="howClose" style="width:100%">Got it</button>
+    </div>
+  </section>
+
+  <!-- PAUSE -->
+  <section class="screen dim" id="pause">
+    <div class="panel" role="dialog" aria-labelledby="pauseTitle">
+      <h2 id="pauseTitle">Paused</h2>
+      <p class="sub" style="margin:0">Shutter closed. The field is frozen.</p>
+      <div class="stack">
+        <button class="btn primary" id="resumeBtn">Resume</button>
+        <button class="btn" id="restartBtn">Restart</button>
+        <button class="btn" id="quitBtn">Quit to Menu</button>
+        <button class="btn soundBtn" id="soundBtn2"></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- RESULTS -->
+  <section class="screen dim" id="results">
+    <div class="panel" role="dialog" aria-labelledby="resReason">
+      <div class="res-head">
+        <span class="eyebrow" id="resReason">Exposure complete</span>
+        <div id="finalScore">0</div>
+        <div id="newBest" hidden>NEW BEST</div>
+        <div class="res-best">Best <b id="resBest">0</b></div>
+      </div>
+      <div class="stats">
+        <div class="stat wide"><span class="badge">×</span><span class="l">Highest combo</span><span class="v" id="sCombo">0</span></div>
+        <div class="stat"><canvas data-icon="star" width="56" height="56"></canvas><span class="l">Stars</span><span class="v" id="sStar">0</span></div>
+        <div class="stat"><canvas data-icon="noise" width="56" height="56"></canvas><span class="l">Noise</span><span class="v" id="sNoise">0</span></div>
+        <div class="stat"><canvas data-icon="agn" width="56" height="56"></canvas><span class="l">AGNs</span><span class="v" id="sAgn">0</span></div>
+        <div class="stat"><canvas data-icon="rrlyrae" width="56" height="56"></canvas><span class="l">RR Lyrae</span><span class="v" id="sRR">0</span></div>
+        <div class="stat"><canvas data-icon="galaxy" width="56" height="56"></canvas><span class="l">Galaxies</span><span class="v" id="sGal">0</span></div>
+        <div class="stat"><canvas data-icon="rock" width="56" height="56"></canvas><span class="l">Rocks hit</span><span class="v" id="sHaz">0</span></div>
+      </div>
+      <div class="res-btns">
+        <button class="btn primary" id="againBtn">Play Again</button>
+        <div class="row-btns">
+          <button class="btn" id="menuBtn">Main Menu</button>
+          <button class="btn soundBtn" id="soundBtn3"></button>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+/* =====================================================================
+   CONFIG — tune the game here.
+   points:  base score per smash (before combo multiplier)
+   weight:  [at start, at end] relative spawn chance; lerped over the round
+   life:    [min, max] seconds on screen
+   speed:   [min, max] px/s (scaled up by difficulty)
+   r:       visual radius in px (tap radius is a bit larger)
+   ===================================================================== */
+const CONFIG = {
+  roundSeconds: 60,
+  lives: 3,
+  comboWindow: 2.4,                                   // seconds allowed between hits before combo expires
+  multipliers: [ { at: 10, x: 2 }, { at: 5, x: 1.5 }, { at: 3, x: 1.2 } ],
+  spawn: {
+    intervalStart: 0.95, intervalEnd: 0.36,           // seconds between spawns
+    maxStart: 5, maxEnd: 13,                          // max simultaneous objects
+    speedStart: 1.0, speedEnd: 1.6,                   // speed multiplier
+    hazardFreeSeconds: 4,                             // no hazards at the very start
+    noiseGroupChance: 0.3,                            // chance noise spawns as a cluster of 2–3
+  },
+  filterFlip: { firstAt: 12, every: 15, duration: 7, bonus: 20, threshold: 0.6 },
+  finalSeconds: 10,
+  discoveryChance: 0.35,                              // chance of an info card after the first discovery of a type
+  minTapRadius: 26,
+  types: {
+    star:    { points: 10, weight: [46, 34], life: [2.8, 3.8], speed: [26, 55],  r: 19 },
+    noise:   { points: 15, weight: [22, 24], life: [1.9, 2.7], speed: [18, 45],  r: 17 },
+    rrlyrae: { points: 40, weight: [6, 6],   life: [2.4, 3.0], speed: [16, 32],  r: 21 },
+    agn:     { points: 50, weight: [4, 5],   life: [1.7, 2.2], speed: [28, 52],  r: 22 },
+    galaxy:  { points: 60, weight: [3, 4],   life: [1.6, 2.1], speed: [20, 38],  r: 26 },
+    meteor:  { hazard: true, weight: [0, 11], life: [6, 6],   speed: [140, 220], r: 18 },
+    rock:    { hazard: true, weight: [5, 9],  life: [3.2, 4.4], speed: [18, 42], r: 22 },
+  },
+};
+
+const LABELS = {
+  star: n => `+${n}`,
+  noise: n => `NOISE CLEARED! +${n}`,
+  rrlyrae: n => `RR LYRAE! +${n}`,
+  agn: n => `RARE AGN! +${n}`,
+  galaxy: n => `GALAXY FOUND! +${n}`,
+};
+const DISCOVERY = {
+  agn: { title: 'Tiny-looking. Ridiculously powerful.', text: 'An active galactic nucleus can shine incredibly brightly because of hot material around a supermassive black hole.', kicker: 'Discovery · AGN' },
+  rrlyrae: { title: 'Same star. Changing brightness.', text: 'RR Lyrae stars pulsate in brightness and help astronomers measure distances in the Universe.', kicker: 'Discovery · RR Lyrae' },
+  galaxy: { title: 'A whole city of stars in one tiny dot.', text: 'Galaxies contain stars, gas, dust and dark matter. Young, hot stars make spirals glow in the ultraviolet.', kicker: 'Discovery · Galaxy' },
+  filter: { title: 'FUV 1300–1800 Å · NUV 2000–3000 Å', text: 'Ultraviolet light comes in wavelengths our eyes cannot see. UVIT images the sky in both bands at once.', kicker: 'Filter Flip' },
+};
+
+/* ---------- utilities ---------- */
+const $ = id => document.getElementById(id);
+const rand = (a, b) => a + Math.random() * (b - a);
+const lerp = (a, b, t) => a + (b - a) * t;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const pick = arr => arr[(Math.random() * arr.length) | 0];
+const easeOutBack = t => { const c = 1.7; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, String(v)); } catch {} },
+};
+function hexRgb(hex) { const n = parseInt(hex.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+function seeded(s) { return () => { s |= 0; s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+
+/* ---------- sound (Web Audio, no files) ---------- */
+const Sound = {
+  ctx: null, master: null, muted: store.get('uvit-muted', '0') === '1',
+  init() {
+    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
+    try {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      this.master = this.ctx.createGain(); this.master.gain.value = 0.32; this.master.connect(this.ctx.destination);
+    } catch { this.ctx = null; }
+  },
+  tone(freq, dur, { type = 'sine', vol = 0.3, to = null, delay = 0, attack = 0.005 } = {}) {
+    const c = this.ctx, t0 = c.currentTime + delay;
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t0);
+    if (to) o.frequency.exponentialRampToValueAtTime(to, t0 + dur);
+    g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(vol, t0 + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(this.master); o.start(t0); o.stop(t0 + dur + 0.02);
+  },
+  hiss(dur, { vol = 0.15, freq = 1200, q = 1, delay = 0, type = 'bandpass' } = {}) {
+    const c = this.ctx, t0 = c.currentTime + delay, len = Math.max(1, (c.sampleRate * dur) | 0);
+    const buf = c.createBuffer(1, len, c.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
+    s.buffer = buf; f.type = type; f.frequency.value = freq; f.Q.value = q; g.gain.value = vol;
+    s.connect(f); f.connect(g); g.connect(this.master); s.start(t0);
+  },
+  play(name) {
+    if (this.muted || !this.ctx) return;
+    if (this.ctx.state === 'suspended') this.ctx.resume();
+    switch (name) {
+      case 'pop': this.tone(rand(480, 560), 0.09, { to: 980, vol: 0.28 }); this.hiss(0.04, { vol: 0.06, freq: 3000 }); break;
+      case 'bonus': [660, 880, 1320].forEach((f, i) => this.tone(f, 0.28, { type: 'triangle', vol: 0.18, delay: i * 0.06 })); this.tone(1760, 0.4, { vol: 0.06, delay: 0.18 }); break;
+      case 'glitch': for (let i = 0; i < 4; i++) this.tone(rand(300, 1400), 0.03, { type: 'square', vol: 0.06, delay: i * 0.025 }); this.hiss(0.09, { vol: 0.08, freq: 4200, q: 3 }); break;
+      case 'hit': this.tone(150, 0.3, { to: 55, vol: 0.35 }); this.hiss(0.22, { vol: 0.12, freq: 400, type: 'lowpass' }); break;
+      case 'combo': [520, 660, 880].forEach((f, i) => this.tone(f, 0.12, { type: 'triangle', vol: 0.12, delay: i * 0.05 })); break;
+      case 'count': this.tone(440, 0.14, { type: 'triangle', vol: 0.2 }); break;
+      case 'go': this.tone(880, 0.3, { type: 'triangle', vol: 0.22 }); this.tone(1320, 0.3, { vol: 0.08 }); break;
+      case 'tick': this.tone(1250, 0.04, { type: 'square', vol: 0.035 }); break;
+      case 'filter': this.tone(300, 0.5, { to: 1400, type: 'sine', vol: 0.12 }); this.tone(450, 0.5, { to: 2100, type: 'triangle', vol: 0.05, delay: 0.05 }); break;
+      case 'over': [660, 550, 440, 330].forEach((f, i) => this.tone(f, 0.35, { type: 'triangle', vol: 0.16, delay: i * 0.13 })); break;
+      case 'ui': this.tone(700, 0.06, { type: 'triangle', vol: 0.1 }); break;
+    }
+  },
+};
+
+/* ---------- canvas & bounds ---------- */
+const canvas = $('field');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0, DPR = 1, SCALE = 1;
+const B = { l: 0, t: 0, r: 0, b: 0 };   // playable bounds (CSS px)
+let nebula = null;
+const bgStars = [];
+
+function insets() {
+  const cs = getComputedStyle($('safe'));
+  return { t: parseFloat(cs.paddingTop) || 0, r: parseFloat(cs.paddingRight) || 0, b: parseFloat(cs.paddingBottom) || 0, l: parseFloat(cs.paddingLeft) || 0 };
+}
+function resize() {
+  W = window.innerWidth; H = window.innerHeight; DPR = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
+  SCALE = clamp(Math.min(W, H) / 680, 0.95, 1.25);
+  const ins = insets();
+  const hudBottom = $('hud').getBoundingClientRect().bottom;
+  B.l = Math.max(14, ins.l + 8); B.r = W - Math.max(14, ins.r + 8);
+  B.t = Math.max(hudBottom, 70) + 6; B.b = H - Math.max(14, ins.b + 10);
+  $('filterChip').style.top = (hudBottom + 2) + 'px';
+  $('banner').style.top = (hudBottom + 34) + 'px';
+  buildBackground();
+  for (const o of G.objs) { if (o.type !== 'meteor') { o.x = clamp(o.x, B.l + o.r, B.r - o.r); o.y = clamp(o.y, B.t + o.r, B.b - o.r); } }
+}
+function buildBackground() {
+  nebula = document.createElement('canvas');
+  const nw = Math.max(1, Math.round(W / 2)), nh = Math.max(1, Math.round(H / 2));
+  nebula.width = nw; nebula.height = nh;
+  const n = nebula.getContext('2d');
+  const g0 = n.createLinearGradient(0, 0, 0, nh); g0.addColorStop(0, '#0a1030'); g0.addColorStop(1, '#060a1d');
+  n.fillStyle = g0; n.fillRect(0, 0, nw, nh);
+  const r = seeded(42);
+  const clouds = [['#5b3fb8', 0.22], ['#2b6fa8', 0.16], ['#b0498f', 0.12], ['#3d2a8a', 0.2], ['#1f8a8a', 0.08]];
+  for (let i = 0; i < 9; i++) {
+    const [col, a] = clouds[i % clouds.length];
+    const x = r() * nw, y = r() * nh, rad = (0.25 + r() * 0.45) * Math.max(nw, nh);
+    const [cr, cg, cb] = hexRgb(col);
+    const g = n.createRadialGradient(x, y, 0, x, y, rad);
+    g.addColorStop(0, `rgba(${cr},${cg},${cb},${a})`); g.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+    n.fillStyle = g; n.fillRect(0, 0, nw, nh);
+  }
+  bgStars.length = 0;
+  const count = Math.round(clamp(W * H / 6500, 70, 260));
+  for (let i = 0; i < count; i++) bgStars.push({ x: Math.random() * W, y: Math.random() * H, s: Math.random() < 0.9 ? rand(0.4, 1.1) : rand(1.2, 1.8), p: Math.random() * 6.28, f: rand(0.6, 2) });
+}
+
+/* glow sprites (cached radial gradients — much faster than shadowBlur) */
+const glowCache = new Map();
+function glow(color) {
+  let s = glowCache.get(color); if (s) return s;
+  s = document.createElement('canvas'); s.width = s.height = 128;
+  const g = s.getContext('2d'), [r, gg, b] = hexRgb(color);
+  const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, `rgba(${r},${gg},${b},1)`); gr.addColorStop(0.22, `rgba(${r},${gg},${b},0.55)`);
+  gr.addColorStop(0.55, `rgba(${r},${gg},${b},0.14)`); gr.addColorStop(1, `rgba(${r},${gg},${b},0)`);
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+  glowCache.set(color, s); return s;
+}
+function sprite(c, color, x, y, rad, a = 1) {
+  if (rad <= 0 || a <= 0) return;
+  const pa = c.globalAlpha; c.globalAlpha = pa * a;
+  c.drawImage(glow(color), x - rad, y - rad, rad * 2, rad * 2);
+  c.globalAlpha = pa;
+}
+
+/* ---------- object drawing ---------- */
+const STAR_CLASS = {
+  hot:  { tint: '#9fdcff', fuv: 0.85, nuv: 0.5 },
+  warm: { tint: '#f4f6ff', fuv: 0.15, nuv: 0.75 },
+  cool: { tint: '#c6d2ff', fuv: 0.05, nuv: 0.35 },
+};
+function drawStar(c, o, t) {
+  const tw = 0.85 + 0.15 * Math.sin(t * 5 + o.seed);
+  const r = o.r;
+  sprite(c, o.tint, o.x, o.y, r * 2.3 * tw, 0.9);
+  sprite(c, '#ffffff', o.x, o.y, r * 0.9, 0.9);
+  c.save(); c.translate(o.x, o.y); c.rotate(o.seed % 0.8);
+  c.strokeStyle = o.tint; c.lineCap = 'round';
+  c.globalAlpha *= 0.65 * tw; c.lineWidth = 1.5;
+  const L = r * 1.35 * tw;
+  c.beginPath(); c.moveTo(-L, 0); c.lineTo(L, 0); c.moveTo(0, -L); c.lineTo(0, L); c.stroke();
+  c.restore();
+  c.fillStyle = '#ffffff'; c.beginPath(); c.arc(o.x, o.y, r * 0.26, 0, 6.283); c.fill();
+}
+function drawNoise(c, o, t) {
+  const step = Math.floor(t * 13 + o.seed * 10);
+  const R = seeded(step * 977 + o.id * 31);
+  const r = o.r, flick = 0.55 + 0.45 * R();
+  sprite(c, '#c9b8ff', o.x, o.y, r * 1.5, 0.35 * flick);
+  const cols = ['#ece6ff', '#ff86df', '#86f3ff', '#ece6ff'];
+  for (let i = 0; i < 8; i++) {
+    const px = o.x + (R() - 0.5) * r * 1.3, py = o.y + (R() - 0.5) * r * 1.3, s = 2.5 + R() * 4.5;
+    c.globalAlpha = flick * (0.6 + R() * 0.4) * o._a;
+    c.fillStyle = cols[i % cols.length]; c.fillRect(px - s / 2, py - s / 2, s, s);
+  }
+  // faint detection-box corners
+  c.globalAlpha = 0.4 * flick * o._a; c.strokeStyle = '#c9b8ff'; c.lineWidth = 1.2;
+  const b = r * 1.05, k = r * 0.38, jx = (R() - 0.5) * 3;
+  c.beginPath();
+  for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+    const cx = o.x + sx * b + jx, cy = o.y + sy * b;
+    c.moveTo(cx, cy - sy * k); c.lineTo(cx, cy); c.lineTo(cx - sx * k, cy);
+  }
+  c.stroke(); c.globalAlpha = o._a;
+}
+function rrPhase(o, t) {
+  const ph = (((t + o.seed) / o.period) % 1 + 1) % 1;
+  // RR Lyrae light curve: fast rise, slow decline
+  const b = ph < 0.16 ? ph / 0.16 : 1 - (ph - 0.16) / 0.84;
+  return { ph, b };
+}
+function drawRR(c, o, t) {
+  const { ph, b } = rrPhase(o, t), r = o.r;
+  sprite(c, '#f7a8d6', o.x, o.y, r * (1.7 + 0.9 * b), 0.55);
+  sprite(c, '#fcd38a', o.x, o.y, r * (1.1 + 0.6 * b), 0.95);
+  c.strokeStyle = '#f7a8d6'; c.lineWidth = 1.6;
+  c.globalAlpha = o._a * (1 - ph) * 0.65;
+  c.beginPath(); c.arc(o.x, o.y, r * (0.7 + ph * 1.5), 0, 6.283); c.stroke();
+  c.globalAlpha = o._a;
+  c.fillStyle = '#fff8ea'; c.beginPath(); c.arc(o.x, o.y, r * (0.24 + 0.12 * b), 0, 6.283); c.fill();
+}
+function drawAGN(c, o, t) {
+  const r = o.r, spin = t * 2.6 + o.seed;
+  sprite(c, '#a98bff', o.x, o.y, r * 2.5, 0.75);
+  c.save(); c.translate(o.x, o.y); c.rotate(o.tilt);
+  // jets
+  c.strokeStyle = '#86f3ff'; c.lineWidth = 1.4; c.globalAlpha = o._a * 0.4;
+  c.beginPath(); c.moveTo(0, -r * 0.4); c.lineTo(0, -r * 1.7); c.moveTo(0, r * 0.4); c.lineTo(0, r * 1.7); c.stroke();
+  // accretion disc
+  c.globalAlpha = o._a;
+  const g = c.createLinearGradient(-r * 1.3, 0, r * 1.3, 0);
+  g.addColorStop(0, '#57e6d0'); g.addColorStop(0.5, '#e9dcff'); g.addColorStop(1, '#a98bff');
+  c.strokeStyle = g; c.lineWidth = 3;
+  c.beginPath(); c.ellipse(0, 0, r * 1.2, r * 0.38, 0, 0, 6.283); c.stroke();
+  c.globalAlpha = o._a * 0.5; c.lineWidth = 1.5;
+  c.beginPath(); c.ellipse(0, 0, r * 0.82, r * 0.25, 0, 0, 6.283); c.stroke();
+  c.globalAlpha = o._a;
+  for (let k = 0; k < 3; k++) {
+    const a = spin + k * 2.094;
+    sprite(c, '#ffffff', Math.cos(a) * r * 1.2, Math.sin(a) * r * 0.38, 4.5, 0.9);
+  }
+  c.restore();
+  sprite(c, '#ffffff', o.x, o.y, r * 0.95, 1);
+  c.fillStyle = '#ffffff'; c.beginPath(); c.arc(o.x, o.y, r * 0.22, 0, 6.283); c.fill();
+}
+function drawGalaxy(c, o, t) {
+  const r = o.r;
+  c.save(); c.translate(o.x, o.y); c.rotate(o.tilt);
+  if (o.variant === 'elliptical') {
+    c.scale(1, 0.62);
+    sprite(c, '#c4b5fd', 0, 0, r * 1.7, 0.85);
+    sprite(c, '#fff0d8', 0, 0, r * 0.8, 0.9);
+  } else {
+    c.scale(1, 0.6);
+    sprite(c, '#8b9cff', 0, 0, r * 2.0, 0.55);
+    const rot = t * 0.9 + o.seed;
+    for (let arm = 0; arm < 2; arm++) {
+      for (let i = 0; i < 20; i++) {
+        const f = i / 19, th = rot + arm * Math.PI + f * 3.4, rad = r * (0.18 + f * 1.05);
+        c.globalAlpha = o._a * (1 - f * 0.7);
+        c.fillStyle = i % 3 === 0 ? '#86f3ff' : '#b8a4ff';
+        c.beginPath(); c.arc(Math.cos(th) * rad, Math.sin(th) * rad, 2.6 * (1 - f * 0.5), 0, 6.283); c.fill();
+      }
+    }
+    c.globalAlpha = o._a;
+    sprite(c, '#fff0d8', 0, 0, r * 0.7, 1);
+  }
+  c.restore();
+}
+function drawMeteor(c, o) {
+  const r = o.r, sp = Math.hypot(o.vx, o.vy) || 1, ux = o.vx / sp, uy = o.vy / sp;
+  const tx = o.x - ux * r * 5, ty = o.y - uy * r * 5;
+  const g = c.createLinearGradient(o.x, o.y, tx, ty);
+  g.addColorStop(0, 'rgba(255,150,90,0.85)'); g.addColorStop(1, 'rgba(255,90,60,0)');
+  c.fillStyle = g;
+  c.beginPath(); c.moveTo(o.x - uy * r * 0.8, o.y + ux * r * 0.8); c.lineTo(tx, ty); c.lineTo(o.x + uy * r * 0.8, o.y - ux * r * 0.8); c.fill();
+  sprite(c, '#ff7d5c', o.x, o.y, r * 1.9, 0.7);
+  drawRockBody(c, o, '#a0573a', '#5c2f22');
+}
+function drawRockBody(c, o, fill, dark) {
+  c.save(); c.translate(o.x, o.y); c.rotate(o.rot);
+  c.fillStyle = fill; c.strokeStyle = dark; c.lineWidth = 2;
+  c.beginPath();
+  const n = o.shape.length;
+  for (let i = 0; i < n; i++) { const a = i / n * 6.283, rr = o.r * o.shape[i]; i ? c.lineTo(Math.cos(a) * rr, Math.sin(a) * rr) : c.moveTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+  c.closePath(); c.fill(); c.stroke();
+  c.fillStyle = dark;
+  for (const [cx, cy, cr] of o.craters) { c.beginPath(); c.arc(cx * o.r, cy * o.r, cr * o.r, 0, 6.283); c.fill(); }
+  c.restore();
+}
+function drawRock(c, o, t) {
+  c.save(); c.translate(o.x, o.y); c.rotate(-t * 0.8);
+  c.strokeStyle = '#ff7d5c'; c.globalAlpha = o._a * 0.4; c.lineWidth = 1.5; c.setLineDash([5, 6]);
+  c.beginPath(); c.arc(0, 0, o.r * 1.4, 0, 6.283); c.stroke(); c.setLineDash([]);
+  c.restore(); c.globalAlpha = o._a;
+  drawRockBody(c, o, '#6e5c54', '#3b302c');
+}
+const DRAW = { star: drawStar, noise: drawNoise, rrlyrae: drawRR, agn: drawAGN, galaxy: drawGalaxy, meteor: drawMeteor, rock: drawRock };
+
+/* ---------- game state ---------- */
+let uid = 0;
+function freshState() {
+  return {
+    mode: 'menu', score: 0, lives: CONFIG.lives, combo: 0, maxCombo: 0, comboTimer: 0,
+    elapsed: 0, countdown: 0, lastCount: 4, spawnTimer: 0.6, lastTick: -1,
+    objs: [], parts: [], texts: [], shake: 0, flash: 0, overDelay: 0, endReason: '',
+    stats: { star: 0, noise: 0, rrlyrae: 0, agn: 0, galaxy: 0, hazard: 0 },
+    filter: { mode: null, blend: 0, timer: 0, next: CONFIG.filterFlip.firstAt, count: 0 },
+    cardTimer: 0, demoTimer: 0,
+  };
+}
+let G = freshState();
+const seen = {};   // discovery cards already shown this session
+let best = parseInt(store.get('uvit-best', '0'), 10) || 0;
+let clock = 0;     // visual time (frozen while paused)
+
+const diff = () => clamp(G.elapsed / CONFIG.roundSeconds, 0, 1);
+
+function makeObj(type, x, y, demo = false) {
+  const T = CONFIG.types[type], d = demo ? 0 : diff();
+  const speed = rand(T.speed[0], T.speed[1]) * lerp(CONFIG.spawn.speedStart, CONFIG.spawn.speedEnd, d);
+  const ang = Math.random() * 6.283;
+  const o = {
+    id: ++uid, type, hazard: !!T.hazard, points: T.points || 0,
+    x, y, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
+    r: T.r * SCALE, age: 0, life: rand(T.life[0], T.life[1]) * (1 - 0.15 * d),
+    dead: false, seed: Math.random() * 100, rot: Math.random() * 6.28, vr: rand(-1.2, 1.2), tilt: rand(-0.8, 0.8),
+    fuv: 0, nuv: 0, _a: 1, demo,
+  };
+  if (type === 'star') {
+    const cls = Math.random() < 0.33 ? 'hot' : Math.random() < 0.5 ? 'warm' : 'cool';
+    Object.assign(o, { cls, tint: STAR_CLASS[cls].tint, fuv: STAR_CLASS[cls].fuv, nuv: STAR_CLASS[cls].nuv });
+    if (Math.random() < 0.45) { o.vy = -Math.abs(o.vy) - speed * 0.4; o.vx *= 0.5; } // some stars "rise"
+  } else if (type === 'agn') { o.fuv = 0.8; o.nuv = 0.8; }
+  else if (type === 'rrlyrae') { o.fuv = 0.3; o.nuv = 0.85; o.period = rand(0.9, 1.3); }
+  else if (type === 'galaxy') { o.variant = Math.random() < 0.65 ? 'spiral' : 'elliptical'; o.fuv = o.variant === 'spiral' ? 0.9 : 0.25; o.nuv = o.variant === 'spiral' ? 0.6 : 0.5; }
+  if (type === 'rock' || type === 'meteor') {
+    o.shape = Array.from({ length: 9 }, () => rand(0.72, 1.08));
+    o.craters = [[rand(-0.3, 0.1), rand(-0.3, 0.1), 0.18], [rand(0.1, 0.35), rand(0, 0.3), 0.12]];
+  }
+  if (type === 'meteor') {
+    // falls diagonally through the play area
+    const fromLeft = x < (B.l + B.r) / 2;
+    const a = Math.PI / 2 + (fromLeft ? -1 : 1) * rand(0.35, 0.75);
+    o.vx = Math.cos(a) * speed; o.vy = Math.sin(a) * speed; o.vr = 3;
+  }
+  return o;
+}
+function spawnPos(r) { return [rand(B.l + r, B.r - r), rand(B.t + r, B.b - r)]; }
+function weightedType() {
+  const d = diff(), allowHazard = G.elapsed >= CONFIG.spawn.hazardFreeSeconds;
+  let total = 0; const ws = [];
+  for (const [k, T] of Object.entries(CONFIG.types)) {
+    const w = (T.hazard && !allowHazard) ? 0 : lerp(T.weight[0], T.weight[1], d);
+    ws.push([k, w]); total += w;
+  }
+  let x = Math.random() * total;
+  for (const [k, w] of ws) { if ((x -= w) <= 0) return k; }
+  return 'star';
+}
+function spawnOne(type = weightedType(), demo = false) {
+  const r = CONFIG.types[type].r * SCALE;
+  if (type === 'meteor') {
+    const x = rand(B.l + r, B.r - r);
+    G.objs.push(makeObj(type, x, B.t + r, demo)); return;
+  }
+  // try to avoid stacking right on top of another object
+  let x, y;
+  for (let i = 0; i < 8; i++) {
+    [x, y] = spawnPos(r);
+    if (!G.objs.some(o => Math.hypot(o.x - x, o.y - y) < (o.r + r) * 1.4)) break;
+  }
+  G.objs.push(makeObj(type, x, y, demo));
+  if (type === 'noise' && !demo && Math.random() < CONFIG.spawn.noiseGroupChance) {
+    const n = Math.random() < 0.5 ? 1 : 2;
+    for (let i = 0; i < n; i++) {
+      const nx = clamp(x + rand(-70, 70) * SCALE, B.l + r, B.r - r), ny = clamp(y + rand(-70, 70) * SCALE, B.t + r, B.b - r);
+      G.objs.push(makeObj('noise', nx, ny));
+    }
+  }
+}
+
+/* ---------- multiplier ---------- */
+function multiplierFor(combo) {
+  for (const m of CONFIG.multipliers) if (combo >= m.at) return m.x;
+  return 1;
+}
+
+/* ---------- hits ---------- */
+function brightIn(o, mode) { return mode === 'FUV' ? o.fuv : mode === 'NUV' ? o.nuv : 0; }
+function isHighlighted(o) { return G.filter.mode && G.filter.blend > 0.5 && !o.hazard && brightIn(o, G.filter.mode) >= CONFIG.filterFlip.threshold; }
+
+function tapAt(x, y) {
+  if (G.mode !== 'playing') return null;
+  let bestT = null, bestTd = Infinity, bestH = null, bestHd = Infinity;
+  for (const o of G.objs) {
+    if (o.dead || o.age < 0.05) continue;
+    const d = Math.hypot(o.x - x, o.y - y);
+    if (o.hazard) {
+      const hr = o.r * 1.05;
+      if (d <= hr && d / hr < bestHd) { bestH = o; bestHd = d / hr; }
+    } else {
+      const hr = Math.max(o.r * 1.3, CONFIG.minTapRadius);
+      if (d <= hr && d / hr < bestTd) { bestT = o; bestTd = d / hr; }
+    }
+  }
+  // targets win ties with hazards, so near-misses never punish a correct tap
+  if (bestT) { smash(bestT); return bestT; }
+  if (bestH) { hitHazard(bestH); return bestH; }
+  missRipple(x, y);
+  return null;
+}
+
+function smash(o) {
+  if (o.dead) return;
+  o.dead = true;
+  G.combo += 1; G.comboTimer = CONFIG.comboWindow; G.maxCombo = Math.max(G.maxCombo, G.combo);
+  const mult = multiplierFor(G.combo);
+  const base = Math.round(o.points * mult);
+  const bonus = isHighlighted(o) ? CONFIG.filterFlip.bonus : 0;
+  const earned = base + bonus;
+  G.score += earned;
+  G.stats[o.type] += 1;
+  const scoreEl = $('score'); scoreEl.classList.remove('bump'); void scoreEl.offsetWidth; scoreEl.classList.add('bump');
+
+  const rare = o.type === 'agn' || o.type === 'rrlyrae' || o.type === 'galaxy';
+  const colors = {
+    star: [o.tint, '#ffffff'], noise: ['#ff86df', '#86f3ff', '#ece6ff'],
+    rrlyrae: ['#fcd38a', '#f7a8d6', '#fff8ea'], agn: ['#a98bff', '#57e6d0', '#ffffff'], galaxy: ['#8b9cff', '#86f3ff', '#fff0d8'],
+  }[o.type];
+  burst(o.x, o.y, colors, o.type === 'noise' ? 'pixel' : 'dot', rare ? 30 : o.type === 'noise' ? 18 : 14, rare ? 230 : 160, o.type === 'galaxy');
+  ring(o.x, o.y, colors[0], rare ? 3 : 1);
+
+  const sub = [];
+  if (mult > 1) sub.push(`${o.points} × ${mult}`);
+  if (bonus) sub.push(`+${bonus} ${G.filter.mode} BONUS`);
+  floatText(o.x, o.y - o.r, LABELS[o.type](earned), rare ? '#ffffff' : o.type === 'noise' ? '#ece6ff' : '#ffffff', rare ? 20 : o.type === 'noise' ? 15 : 18, sub.join(' · '), rare ? colors[0] : null);
+
+  if (rare) Sound.play('bonus'); else if (o.type === 'noise') Sound.play('glitch'); else Sound.play('pop');
+  if (bonus) { G.flash = 0.25; }
+
+  // combo milestones
+  const msg = G.combo === 3 ? 'COMBO x3!' : G.combo === 5 ? 'NICE STREAK!' : G.combo === 10 ? 'COSMIC COMBO!' : G.combo === 15 ? 'ULTRAVIOLET FRENZY!' : (G.combo > 15 && G.combo % 5 === 0) ? `COMBO x${G.combo}!` : null;
+  if (msg) { banner(msg); Sound.play('combo'); }
+  else if (o.type === 'noise' && Math.random() < 0.12) banner('False detection eliminated!', true);
+
+  if (rare) maybeDiscovery(o.type, o);
+}
+
+function hitHazard(o) {
+  if (o.dead) return;
+  o.dead = true;
+  G.lives -= 1; G.combo = 0; G.comboTimer = 0; G.stats.hazard += 1;
+  G.shake = reduceMotion ? 0 : 14; G.flash = -0.45;
+  burst(o.x, o.y, ['#ff7d5c', '#a0573a', '#6e5c54'], 'shard', 18, 200);
+  floatText(o.x, o.y - o.r, o.type === 'meteor' ? 'SPACE ROCK!' : 'WRONG OBJECT!', '#ff9b80', 19, `−1 life`);
+  Sound.play('hit');
+  renderLives();
+  if (G.lives <= 0) endGame('lives');
+}
+
+/* ---------- effects ---------- */
+const PART_CAP = 500;
+function burst(x, y, colors, kind, n, spd, swirl = false) {
+  if (reduceMotion) n = Math.ceil(n / 2);
+  for (let i = 0; i < n && G.parts.length < PART_CAP; i++) {
+    const a = Math.random() * 6.283, s = rand(0.3, 1) * spd;
+    const p = { x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, age: 0, life: rand(0.4, 0.8), color: pick(colors), size: kind === 'pixel' ? rand(3, 6) : rand(1.5, 3.2), kind };
+    if (swirl) { p.vx += -Math.sin(a) * spd * 0.6; p.vy += Math.cos(a) * spd * 0.6; }
+    G.parts.push(p);
+  }
+}
+function ring(x, y, color, n = 1) {
+  for (let i = 0; i < n; i++) G.parts.push({ x, y, age: -i * 0.09, life: 0.55, color, kind: 'ring', size: 10 });
+}
+function missRipple(x, y) { G.parts.push({ x, y, age: 0, life: 0.3, color: '#9ba4d8', kind: 'ring', size: 4, faint: true }); }
+function floatText(x, y, text, color, size, sub = '', glowCol = null) {
+  G.texts.push({ x, y, text, color, size: size * clamp(SCALE, 0.9, 1.1), sub, glowCol, age: 0, life: 1.05 });
+}
+function banner(text, small = false) {
+  const el = $('banner');
+  el.textContent = text;
+  el.style.fontSize = small ? 'clamp(14px, 3.6vw, 18px)' : '';
+  el.style.color = small ? 'var(--nuv)' : '';
+  el.classList.remove('go'); void el.offsetWidth; el.classList.add('go');
+}
+function showCard(key, iconType, variantObj) {
+  const d = DISCOVERY[key]; if (!d) return;
+  $('cardKicker').textContent = d.kicker; $('cardTitle').textContent = d.title; $('cardText').textContent = d.text;
+  drawIcon($('card').querySelector('canvas'), iconType, variantObj);
+  $('card').classList.add('show');
+  G.cardTimer = 3.6;
+}
+function maybeDiscovery(type, o) {
+  if (!seen[type] || Math.random() < CONFIG.discoveryChance) { seen[type] = true; showCard(type, type, o); }
+}
+
+/* ---------- filter flip ---------- */
+function updateFilter(dt) {
+  const F = G.filter, cfg = CONFIG.filterFlip;
+  if (F.mode) {
+    F.timer -= dt;
+    F.blend = Math.min(1, F.blend + dt / 0.6);
+    if (F.timer <= 0) { F.endMode = F.mode; F.mode = null; F.next = G.elapsed + cfg.every - cfg.duration; $('filterChip').classList.remove('show'); }
+  } else {
+    F.blend = Math.max(0, F.blend - dt / 0.6);
+    if (G.elapsed >= F.next && CONFIG.roundSeconds - G.elapsed > 4) {
+      F.mode = F.count % 2 === 0 ? 'FUV' : 'NUV'; F.count += 1; F.timer = cfg.duration; F.endMode = F.mode;
+      const chip = $('filterChip');
+      chip.className = F.mode.toLowerCase();
+      chip.innerHTML = F.mode === 'FUV' ? '<b>FUV</b> · 1300–1800 Å · glowing sources +20' : '<b>NUV</b> · 2000–3000 Å · glowing sources +20';
+      void chip.offsetWidth; chip.classList.add('show');
+      banner(`FILTER FLIP → ${F.mode}`);
+      Sound.play('filter');
+      if (!seen.filter) { seen.filter = true; showCard('filter', 'agn'); }
+    }
+  }
+}
+function bandColor(mode) { return mode === 'FUV' ? '#a98bff' : '#57e6d0'; }
+
+/* ---------- flow ---------- */
+const screens = ['menu', 'how', 'pause', 'results'];
+function showScreen(id) { for (const s of screens) $(s).classList.toggle('show', s === id); }
+function setHud(on) { $('hud').classList.toggle('show', on); }
+
+function startGame() {
+  Sound.init();
+  G = freshState();
+  G.mode = 'countdown'; G.countdown = 3;
+  showScreen(null); setHud(true);
+  $('card').classList.remove('show'); $('filterChip').classList.remove('show'); $('banner').classList.remove('go');
+  $('timer').classList.remove('final');
+  renderLives(); updateHud(true);
+  requestAnimationFrame(resize);   // HUD is now visible; re-measure the play area
+}
+function endGame(reason) {
+  if (G.mode !== 'playing') return;
+  G.mode = 'over'; G.endReason = reason; G.overDelay = 1.0;
+  for (const o of G.objs) if (!o.dead) { o.life = Math.min(o.life, o.age + 0.35); }
+  $('filterChip').classList.remove('show');
+  $('timer').classList.remove('final');
+  Sound.play('over');
+}
+function showResults() {
+  G.mode = 'results';
+  const isNew = G.score > best;
+  if (isNew) { best = G.score; store.set('uvit-best', best); }
+  $('resReason').textContent = G.endReason === 'lives' ? 'Out of lives · exposure aborted' : 'Exposure complete · 60 s';
+  $('finalScore').textContent = G.score.toLocaleString();
+  $('newBest').hidden = !(isNew && G.score > 0);
+  $('resBest').textContent = best.toLocaleString();
+  $('sCombo').textContent = G.maxCombo;
+  $('sStar').textContent = G.stats.star; $('sNoise').textContent = G.stats.noise; $('sAgn').textContent = G.stats.agn;
+  $('sRR').textContent = G.stats.rrlyrae; $('sGal').textContent = G.stats.galaxy; $('sHaz').textContent = G.stats.hazard;
+  $('menuBest').textContent = best.toLocaleString();
+  $('card').classList.remove('show');
+  setHud(false); showScreen('results');
+}
+function pauseGame() {
+  if (G.mode !== 'playing' && G.mode !== 'countdown') return;
+  G.pausedFrom = G.mode; G.mode = 'paused';
+  showScreen('pause');
+}
+function resumeGame() {
+  if (G.mode !== 'paused') return;
+  G.mode = G.pausedFrom || 'playing';
+  showScreen(null);
+}
+function toMenu() {
+  G = freshState();
+  setHud(false); $('card').classList.remove('show'); $('filterChip').classList.remove('show');
+  $('menuBest').textContent = best.toLocaleString();
+  showScreen('menu');
+}
+
+/* ---------- HUD ---------- */
+const hudCache = {};
+function setText(id, v) { if (hudCache[id] !== v) { hudCache[id] = v; $(id).textContent = v; } }
+function renderLives() {
+  const el = $('lives'); el.innerHTML = '';
+  for (let i = 0; i < CONFIG.lives; i++) { const d = document.createElement('span'); d.className = 'life' + (i >= G.lives ? ' lost' : ''); el.appendChild(d); }
+}
+function updateHud(force = false) {
+  if (force) for (const k in hudCache) delete hudCache[k];
+  setText('score', G.score.toLocaleString());
+  const remain = Math.max(0, CONFIG.roundSeconds - G.elapsed);
+  setText('timer', String(Math.ceil(remain)));
+  $('timer').classList.toggle('final', G.mode === 'playing' && remain <= CONFIG.finalSeconds);
+  setText('comboN', String(G.combo));
+  const m = multiplierFor(G.combo);
+  setText('mult', '×' + m);
+  const multEl = $('mult'); multEl.classList.toggle('hot', m > 1 && m < 2); multEl.classList.toggle('max', m >= 2);
+  $('comboFill').style.width = (G.combo > 0 ? G.comboTimer / CONFIG.comboWindow * 100 : 0) + '%';
+  $('expFill').style.width = (diff() * 100) + '%';
+  setText('level', 'LV' + Math.min(5, 1 + Math.floor(diff() * 5)));
+}
+
+/* ---------- update ---------- */
+function updateObjects(dt, t) {
+  for (const o of G.objs) {
+    o.age += dt;
+    if (o.type === 'noise') {
+      // jittery random walk
+      o.vx += rand(-1, 1) * 260 * dt; o.vy += rand(-1, 1) * 260 * dt;
+      const s = Math.hypot(o.vx, o.vy), cap = 70 * SCALE; if (s > cap) { o.vx *= cap / s; o.vy *= cap / s; }
+    }
+    o.x += o.vx * dt; o.y += o.vy * dt; o.rot += o.vr * dt;
+    if (o.type !== 'meteor') {
+      if (o.x < B.l + o.r) { o.x = B.l + o.r; o.vx = Math.abs(o.vx); }
+      if (o.x > B.r - o.r) { o.x = B.r - o.r; o.vx = -Math.abs(o.vx); }
+      if (o.y < B.t + o.r) { o.y = B.t + o.r; o.vy = Math.abs(o.vy); }
+      if (o.y > B.b - o.r) { o.y = B.b - o.r; o.vy = -Math.abs(o.vy); }
+    } else if (o.y - o.r > B.b || o.x + o.r < B.l || o.x - o.r > B.r) { o.age = o.life + 1; }
+  }
+  G.objs = G.objs.filter(o => !o.dead && o.age < o.life);
+}
+function updateFx(dt) {
+  for (const p of G.parts) {
+    p.age += dt;
+    if (p.kind !== 'ring') { p.x += p.vx * dt; p.y += p.vy * dt; const k = Math.pow(0.04, dt); p.vx *= k; p.vy *= k; if (p.kind === 'shard') p.vy += 260 * dt; }
+  }
+  G.parts = G.parts.filter(p => p.age < p.life);
+  for (const tx of G.texts) { tx.age += dt; tx.y -= 42 * dt; }
+  G.texts = G.texts.filter(tx => tx.age < tx.life);
+  G.shake = Math.max(0, G.shake - dt * 60);
+  G.flash = G.flash > 0 ? Math.max(0, G.flash - dt) : Math.min(0, G.flash + dt);
+  if (G.cardTimer > 0) { G.cardTimer -= dt; if (G.cardTimer <= 0) $('card').classList.remove('show'); }
+}
+function updatePlaying(dt) {
+  G.elapsed += dt;
+  const remain = CONFIG.roundSeconds - G.elapsed;
+  if (remain <= 0) { G.elapsed = CONFIG.roundSeconds; updateHud(); endGame('time'); return; }
+  const d = diff(), S = CONFIG.spawn;
+  G.spawnTimer -= dt;
+  const maxObjs = Math.round(lerp(S.maxStart, S.maxEnd, d));
+  const targets = G.objs.filter(o => !o.hazard).length;
+  if ((G.spawnTimer <= 0 && G.objs.length < maxObjs) || targets === 0) {
+    spawnOne();
+    G.spawnTimer = lerp(S.intervalStart, S.intervalEnd, d) * rand(0.7, 1.3);
+  }
+  if (G.combo > 0) { G.comboTimer -= dt; if (G.comboTimer <= 0) { G.combo = 0; G.comboTimer = 0; } }
+  updateFilter(dt);
+  if (remain <= CONFIG.finalSeconds) { const s = Math.ceil(remain); if (s !== G.lastTick) { G.lastTick = s; Sound.play('tick'); } }
+  updateObjects(dt, clock);
+}
+function updateCountdown(dt) {
+  G.countdown -= dt;
+  const n = Math.ceil(G.countdown);
+  if (n !== G.lastCount && n > 0) { G.lastCount = n; cdShow(String(n)); Sound.play('count'); }
+  if (G.countdown <= 0) { G.mode = 'playing'; cdShow('GO!', true); Sound.play('go'); }
+}
+function cdShow(text, go = false) {
+  const el = $('countdown'); el.innerHTML = '';
+  const s = document.createElement('span'); s.textContent = text; if (go) s.className = 'goTxt';
+  el.appendChild(s);
+}
+function updateMenuDemo(dt) {
+  // ambient sources drifting behind the menu (not interactive)
+  G.demoTimer -= dt;
+  if (G.demoTimer <= 0 && G.objs.length < 7) {
+    spawnOne(pick(['star', 'star', 'star', 'noise', 'rrlyrae', 'agn', 'galaxy', 'rock']), true);
+    G.demoTimer = rand(0.5, 1.1);
+  }
+  updateObjects(dt, clock);
+}
+
+/* ---------- render ---------- */
+function render() {
+  const c = ctx;
+  c.setTransform(DPR, 0, 0, DPR, 0, 0);
+  c.globalCompositeOperation = 'source-over'; c.globalAlpha = 1;
+  if (nebula) c.drawImage(nebula, 0, 0, W, H);
+
+  const final = G.mode === 'playing' && CONFIG.roundSeconds - G.elapsed <= CONFIG.finalSeconds;
+  if (final) {
+    const k = 0.5 + 0.5 * Math.sin(clock * 6);
+    const g = c.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.75);
+    g.addColorStop(0, 'rgba(247,168,214,0)'); g.addColorStop(1, `rgba(200,70,160,${0.1 + 0.08 * k})`);
+    c.fillStyle = g; c.fillRect(0, 0, W, H);
+  }
+
+  // filter tint
+  const F = G.filter;
+  const fm = F.mode || F.endMode;
+  if (F.blend > 0 && fm) {
+    const [r, g2, b] = hexRgb(bandColor(fm));
+    c.fillStyle = `rgba(${r},${g2},${b},${0.07 * F.blend})`; c.fillRect(0, 0, W, H);
+  }
+
+  // background stars
+  for (const s of bgStars) {
+    c.globalAlpha = 0.35 + 0.35 * Math.sin(clock * s.f + s.p);
+    c.fillStyle = '#dfe5ff'; c.fillRect(s.x, s.y, s.s, s.s);
+  }
+  c.globalAlpha = 1;
+
+  // detector field of view: UVIT's ~28′ circular field
+  const cx = (B.l + B.r) / 2, cy = (B.t + B.b) / 2, R = Math.min(B.r - B.l, B.b - B.t) * 0.5 - 4;
+  if (R > 40) {
+    c.strokeStyle = 'rgba(160,175,255,0.13)'; c.lineWidth = 1;
+    c.beginPath(); c.arc(cx, cy, R, 0, 6.283); c.stroke();
+    c.beginPath();
+    for (let i = 0; i < 72; i++) { const a = i / 72 * 6.283, L = i % 6 === 0 ? 9 : 4; c.moveTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); c.lineTo(cx + Math.cos(a) * (R - L), cy + Math.sin(a) * (R - L)); }
+    c.stroke();
+    if (G.mode !== 'menu' && G.mode !== 'results') {
+    c.fillStyle = 'rgba(160,175,255,0.32)'; c.font = '500 10px "IBM Plex Mono", monospace'; c.textAlign = 'left';
+    c.fillText('UVIT · FOV ≈ 28′', cx + R * 0.72, cy + R * 0.94);
+    c.fillText(fm && F.blend > 0 ? (fm === 'FUV' ? 'FUV 1300–1800 Å' : 'NUV 2000–3000 Å') : 'VIS', cx - R * 0.92, cy + R * 0.94);
+    }
+  }
+
+  c.save();
+  if (G.shake > 0) c.translate(rand(-1, 1) * G.shake * 0.6, rand(-1, 1) * G.shake * 0.6);
+  c.globalCompositeOperation = 'lighter';
+
+  // objects
+  for (const o of G.objs) {
+    const fadeIn = Math.min(1, o.age / 0.22), fadeOut = clamp((o.life - o.age) / 0.35, 0, 1);
+    let a = Math.min(fadeIn, fadeOut);
+    if (o.demo) a *= 0.55;
+    if (F.blend > 0 && fm && !o.hazard) {
+      const b = brightIn(o, fm);
+      a *= lerp(1, 0.45 + 0.55 * b, F.blend);
+    }
+    const s = o.age < 0.3 ? easeOutBack(Math.min(1, o.age / 0.3)) : 1;
+    // warn when about to vanish: subtle blink in last 0.6s (targets only)
+    if (!o.hazard && o.life - o.age < 0.6 && o.life - o.age > 0.35) a *= 0.7 + 0.3 * Math.sin(clock * 40);
+    o._a = a;
+    c.globalAlpha = a;
+    if (o.hazard) c.globalCompositeOperation = 'source-over';
+    c.save(); c.translate(o.x, o.y); c.scale(s, s); c.translate(-o.x, -o.y);
+    DRAW[o.type](c, o, clock);
+    c.restore();
+    c.globalCompositeOperation = 'lighter';
+    // filter highlight ring
+    if (F.blend > 0 && fm && !o.hazard && brightIn(o, fm) >= CONFIG.filterFlip.threshold) {
+      const col = bandColor(fm), pulse = 1 + 0.08 * Math.sin(clock * 7 + o.seed);
+      sprite(c, col, o.x, o.y, o.r * 2.4 * pulse, 0.5 * F.blend * a);
+      c.globalAlpha = 0.9 * F.blend * a; c.strokeStyle = col; c.lineWidth = 2.2;
+      c.beginPath(); c.arc(o.x, o.y, o.r * 1.55 * pulse, 0, 6.283); c.stroke();
+    }
+  }
+  c.globalAlpha = 1;
+
+  // particles
+  for (const p of G.parts) {
+    if (p.age < 0) continue;
+    const k = p.age / p.life, a = 1 - k;
+    if (p.kind === 'ring') {
+      c.globalAlpha = a * (p.faint ? 0.5 : 0.8); c.strokeStyle = p.color; c.lineWidth = p.faint ? 1 : 2;
+      c.beginPath(); c.arc(p.x, p.y, p.size + k * (p.faint ? 18 : 46) * SCALE, 0, 6.283); c.stroke();
+    } else if (p.kind === 'pixel' || p.kind === 'shard') {
+      if (p.kind === 'shard') c.globalCompositeOperation = 'source-over';
+      c.globalAlpha = a; c.fillStyle = p.color; c.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+      c.globalCompositeOperation = 'lighter';
+    } else {
+      sprite(c, p.color, p.x, p.y, p.size * 3, a);
+    }
+  }
+  c.restore();
+
+  // floating text
+  c.globalCompositeOperation = 'source-over';
+  c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round';
+  for (const tx of G.texts) {
+    const k = tx.age / tx.life, a = k < 0.7 ? 1 : 1 - (k - 0.7) / 0.3;
+    const pop = tx.age < 0.12 ? 0.7 + 0.3 * (tx.age / 0.12) * 1.1 : 1;
+    c.globalAlpha = a;
+    c.font = `800 ${tx.size * pop}px Unbounded, "Arial Black", sans-serif`;
+    const tw = c.measureText(tx.text).width;
+    const x = clamp(tx.x, B.l + tw / 2, B.r - tw / 2), y = Math.max(tx.y, B.t + 12);
+    if (tx.glowCol) sprite(c, tx.glowCol, x, y, tw * 0.6, 0.35 * a);
+    c.lineWidth = 4; c.strokeStyle = 'rgba(6,10,29,0.85)'; c.strokeText(tx.text, x, y);
+    c.fillStyle = tx.color; c.fillText(tx.text, x, y);
+    if (tx.sub) {
+      c.font = '600 11px "IBM Plex Mono", monospace';
+      c.lineWidth = 3; c.strokeText(tx.sub, x, y + tx.size * 0.95);
+      c.fillStyle = '#57e6d0'; c.fillText(tx.sub, x, y + tx.size * 0.95);
+    }
+  }
+  c.globalAlpha = 1;
+
+  // hit / bonus flash
+  if (G.flash !== 0) {
+    c.fillStyle = G.flash > 0 ? `rgba(169,139,255,${G.flash * 0.25})` : `rgba(255,90,60,${-G.flash * 0.3})`;
+    c.fillRect(0, 0, W, H);
+  }
+}
+
+/* ---------- main loop (exactly one rAF chain for the life of the page) ---------- */
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, Math.max(0, (now - last) / 1000)); last = now;
+  if (G.mode !== 'paused') clock += dt;
+  switch (G.mode) {
+    case 'menu': case 'results': updateMenuDemo(dt); updateFx(dt); break;
+    case 'countdown': updateCountdown(dt); updateFx(dt); break;
+    case 'playing': updatePlaying(dt); updateFx(dt); break;
+    case 'over':
+      updateObjects(dt, clock); updateFx(dt);
+      G.overDelay -= dt; if (G.overDelay <= 0) { G.objs = []; showResults(); }
+      break;
+    case 'paused': break;
+  }
+  if (G.mode === 'playing' || G.mode === 'countdown' || G.mode === 'over') updateHud();
+  render();
+  requestAnimationFrame(frame);
+}
+
+/* ---------- icons for menus ---------- */
+function drawIcon(cv, type, ref) {
+  const c = cv.getContext('2d'), w = cv.width, h = cv.height;
+  c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, w, h);
+  c.globalCompositeOperation = 'lighter';
+  const base = type === 'galaxyE' ? 'galaxy' : type;
+  const scale = w / 80;
+  const o = {
+    id: 1, type: base, x: w / 2, y: h / 2, r: ({ star: 13, noise: 14, rrlyrae: 13, agn: 14, galaxy: 18, meteor: 11, rock: 16 }[base]) * scale,
+    seed: 3, rot: 0.6, tilt: -0.5, _a: 1, tint: STAR_CLASS.hot.tint, period: 1.1, vx: 1, vy: 0.8,
+    variant: type === 'galaxyE' ? 'elliptical' : 'spiral',
+    shape: [1, 0.85, 1.02, 0.8, 0.95, 1.05, 0.82, 0.98, 0.9], craters: [[-0.2, -0.15, 0.18], [0.25, 0.2, 0.12]],
+  };
+  if (ref && ref.type === base) { if (ref.variant) o.variant = ref.variant; if (ref.tint) o.tint = ref.tint; }
+  if (base === 'meteor') { o.x = w * 0.62; o.y = h * 0.62; }
+  if (base === 'rock' || base === 'meteor') c.globalCompositeOperation = 'source-over';
+  DRAW[base](c, o, 0.9);
+}
+function drawAllIcons() { document.querySelectorAll('canvas[data-icon]').forEach(cv => drawIcon(cv, cv.dataset.icon)); }
+
+/* ---------- input ---------- */
+canvas.addEventListener('pointerdown', e => {
+  if (G.mode !== 'playing') return;
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  tapAt(e.clientX - rect.left, e.clientY - rect.top);
+}, { passive: false });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+function syncSoundButtons() {
+  const label = Sound.muted ? 'Sound Off' : 'Sound On';
+  document.querySelectorAll('.soundBtn').forEach(b => { b.textContent = label; b.setAttribute('aria-pressed', String(!Sound.muted)); });
+}
+document.querySelectorAll('.soundBtn').forEach(b => b.addEventListener('click', () => {
+  Sound.init(); Sound.muted = !Sound.muted; store.set('uvit-muted', Sound.muted ? '1' : '0'); syncSoundButtons(); Sound.play('ui');
+}));
+$('playBtn').addEventListener('click', startGame);
+$('againBtn').addEventListener('click', startGame);
+$('howBtn').addEventListener('click', () => { Sound.init(); Sound.play('ui'); showScreen('how'); });
+$('howClose').addEventListener('click', () => { Sound.play('ui'); showScreen('menu'); });
+$('pauseBtn').addEventListener('click', e => { e.stopPropagation(); pauseGame(); });
+$('resumeBtn').addEventListener('click', resumeGame);
+$('restartBtn').addEventListener('click', startGame);
+$('quitBtn').addEventListener('click', toMenu);
+$('menuBtn').addEventListener('click', toMenu);
+window.addEventListener('keydown', e => {
+  if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') { if (G.mode === 'paused') resumeGame(); else pauseGame(); }
+});
+document.addEventListener('visibilitychange', () => { if (document.hidden) pauseGame(); });
+window.addEventListener('resize', resize);
+
+/* ---------- boot ---------- */
+syncSoundButtons();
+$('menuBest').textContent = best.toLocaleString();
+renderLives();
+resize();
+drawAllIcons();
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { drawAllIcons(); resize(); });
+requestAnimationFrame(t => { last = t; frame(t); });
+
+// test hook (harmless for players)
+window.UVIT = {
+  get state() { return G; }, CONFIG, tapAt, multiplierFor, startGame, pauseGame, resumeGame, toMenu,
+  spawn(type, x, y) { const o = makeObj(type, x, y); o.age = 0.3; o.life = 99; o.vx = o.vy = 0; G.objs.push(o); return o; },
+  bounds: B,
+};
+})();
+</script>
+
+</body>
+</html>
